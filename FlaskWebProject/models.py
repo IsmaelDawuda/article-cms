@@ -2,18 +2,17 @@ from datetime import datetime
 from FlaskWebProject import app, db, login
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
-from azure.storage.blob import BlockBlobService
+from azure.storage.blob import BlobServiceClient
 import string, random
-from werkzeug import secure_filename
+from werkzeug.utils import secure_filename
 from flask import flash
 
 blob_container = app.config['BLOB_CONTAINER']
-blob_service = BlockBlobService(account_name=app.config['BLOB_ACCOUNT'], account_key=app.config['BLOB_STORAGE_KEY'])
-
+blob_service_client = BlobServiceClient.from_connection_string(app.config['BLOB_CONNECTION_STRING'])
+container_client = blob_service_client.get_container_client(blob_container)
 
 def id_generator(size=32, chars=string.ascii_uppercase + string.digits):
     return ''.join(random.choice(chars) for _ in range(size))
-
 
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
@@ -30,11 +29,9 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-
 @login.user_loader
 def load_user(id):
     return User.query.get(int(id))
-
 
 class Post(db.Model):
     __tablename__ = 'posts'
@@ -49,23 +46,25 @@ class Post(db.Model):
     def __repr__(self):
         return '<Post {}>'.format(self.body)
 
-    def save_changes(self, form, file, user_id, new=False):
+    def save_changes(self, form, file, userId, new=False):
         self.title = form.title.data
         self.author = form.author.data
         self.body = form.body.data
-        self.user_id = user_id
+        self.user_id = userId
 
         if file:
             filename = secure_filename(file.filename)
-            file_extension = filename.rsplit('.', 1)[1]
-            random_filename = id_generator()
-            filename = random_filename + '.' + file_extension
+            fileextension = filename.rsplit('.', 1)[1]
+            Randomfilename = id_generator()
+            filename = Randomfilename + '.' + fileextension
             try:
-                blob_service.create_blob_from_stream(blob_container, filename, file)
+                blob_client = container_client.get_blob_client(filename)
+                blob_client.upload_blob(file, overwrite=True)
                 if self.image_path:
-                    blob_service.delete_blob(blob_container, self.image_path)
-            except Exception:
-                flash(Exception)
+                    old_blob_client = container_client.get_blob_client(self.image_path)
+                    old_blob_client.delete_blob()
+            except Exception as e:
+                flash(str(e))
             self.image_path = filename
         if new:
             db.session.add(self)
